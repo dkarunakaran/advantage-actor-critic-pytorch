@@ -54,17 +54,18 @@ class Train:
             for i in range(self.cfg['train']['n_timesteps']):
                 # The actor layer output the action probability as the actor NN has softmax in the output layer
                 action_prob = self.actor(state)
-                # categorical function can  give categorical distribution from softmax probability or from logits(no softmax layer in output) with logits as attribute 
-                action_dist= Categorical(action_prob)
-
-                # Sample the action
-                action = action_dist.sample()
 
                 # As we know we do not use categorical cross entropy loss function directly, but contruct manually to have more control.
                 # Categorical cross entropy loss function in pytorch does logits to probability using softmax to categorical distribution,
                 # then compute the loss. So normally no need to add softmax function to the NN explicilty. In this work we add the softmax layer on the 
                 # NN and compute the categorical distribution.
                 
+                # categorical function can  give categorical distribution from softmax probability or from logits(no softmax layer in output) with logits as attribute 
+                action_dist= Categorical(action_prob)
+
+                # Sample the action
+                action = action_dist.sample()
+
                 # Get the log probability to get log pi_theta(a|s) and save it to a list.
                 log_probs.append(action_dist.log_prob(action))
                 
