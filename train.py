@@ -108,7 +108,8 @@ class Train:
 
                 # Calculate critic (value) loss using huber loss
                 # Huber loss, which is less sensitive to outliers in data than squared-error loss. In value based RL ssetup, huber loss is preferred.
-                c_loss =  F.huber_loss(state_value, torch.tensor([R])) #F.smooth_l1_loss(state_value, torch.tensor([R]))
+                # Smooth L1 loss is closely related to HuberLoss
+                c_loss =  F.smooth_l1_loss(state_value, torch.tensor([R])) #F.huber_loss(state_value, torch.tensor([R]))
                 critic_loss_list.append(c_loss)
 
             # Sum up all the values of actor_losses(policy_losses) and critic_loss(value_losses)
