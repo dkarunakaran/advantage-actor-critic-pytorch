@@ -7,6 +7,8 @@ import yaml
 from utility import logger_helper
 from torch.distributions import Categorical
 import numpy as np
+import matplotlib.pyplot as plt
+import torch.nn.functional as F
 
 
 # Ref: https://github.com/nikhilbarhate99/Actor-Critic-PyTorch
@@ -32,11 +34,14 @@ class Train:
         critic_optim = optim.Adam(self.critic.parameters(), lr=self.cfg['train']['lr'], betas=self.cfg['train']['betas'])
         avg_reward = []
         actor_losses = []
+        avg_actor_losses = []
         critic_losses = []
+        avg_critic_losses = []
+        eps = np.finfo(np.float32).eps.item()
         for episode in range(self.cfg['train']['n_epidode']):
             rewards = []
             log_probs = []
-            advantages = []
+            state_values = []
 
             state = self.env.reset()
             # Converted to tensor
@@ -44,6 +49,7 @@ class Train:
             self.logger.info(f"--------Episode: {episode} started----------")
             actor_optim.zero_grad()
             critic_optim.zero_grad()
+
             # loop through timesteps
             for i in range(self.cfg['train']['n_timesteps']):
                 # The actor layer output the action probability as the actor NN has softmax in the output layer
@@ -58,60 +64,91 @@ class Train:
                 # Categorical cross entropy loss function in pytorch does logits to probability using softmax to categorical distribution,
                 # then compute the loss. So normally no need to add softmax function to the NN explicilty. In this work we add the softmax layer on the 
                 # NN and compute the categorical distribution.
-
-                # Action has to convert from tensor to numpy for env to process
-                next_state, reward, done, _, _= self.env.step(action.detach().numpy())
                 
-                # Get the log probability to get log pi_theta(a|s)
-                log_prob = action_dist.log_prob(action).unsqueeze(0)
+                # Get the log probability to get log pi_theta(a|s) and save it to a list.
+                log_probs.append(action_dist.log_prob(action))
                 
                 # Compute the current state-value 
                 v_st = self.critic(state)
-                
-                # Compute the state-value for next state
-                next_state = torch.FloatTensor(next_state)
-                v_st_plus_1 = self.critic(next_state)
+                state_values.append(v_st)
 
-                # Get the advantage from r(s_t,a_t)+v_s_t+1 - v_s_t
-                adv = reward+(self.cfg['train']['gamma']*v_st_plus_1.detach().numpy().item()) - v_st.detach().numpy().item()
-
-                # String the value for loss computation
+                # Action has to convert from tensor to numpy for env to process
+                next_state, reward, done, _, _= self.env.step(action.detach().numpy())
                 rewards.append(reward)
-                log_probs.append(log_prob)
-                advantages.append(adv)
 
-                #assign next state as current state
-                state = next_state
+                # Assign next state as current state
+                state = torch.FloatTensor(next_state) 
 
+                # Enviornment return done == true if the current episode is terminated
                 if done:
                     self.logger.info('Iteration: {}, Score: {}'.format(episode, i))
                     break
             
-            avg_reward.append(np.mean(rewards))        
-            advantages = torch.tensor(advantages)
-            rewards = torch.tensor(rewards)
-            log_probs = torch.cat(log_probs)
+            R = 0
+            actor_loss_list = [] # list to save actor (policy) loss
+            critic_loss_list = [] # list to save critic (value) loss
+            returns = [] # list to save the true values
 
-            # Same as cross entropy loss for where cross entropy loss is multiplied with Advantage function. formuala:  sum of log pi_theta(a_t, s_t) * Advantage
-            actor_loss = -(log_probs * advantages.detach()).mean()
-            actor_losses.append(actor_loss.detach().numpy().item())
+            # Calculate the return of each episode using rewards returned from the environment in the episode
+            for r in rewards[::-1]:
+                # Calculate the discounted value
+                R = r + self.cfg['train']['gamma'] * R
+                returns.insert(0, R)
 
-            # Some form of advantage function is used to commpute the loss of critic
-            critic_loss = advantages.pow(2).mean()
-            
-            # Need to make required grad true to compute the loss
-            critic_loss.requires_grad=True
-            critic_losses.append(critic_loss.detach().numpy().item())
+            returns = torch.tensor(returns)
+            returns = (returns - returns.mean()) / (returns.std() + eps)
+            for log_prob, state_value, R in zip(log_probs, state_values, returns):
 
-            # Compute gradient
+                # Advantage is calculated by the difference between actual return of current stateand estimated return of current state(v_st)
+                advantage = R - state_value.item()
+
+                # Calculate actor (policy) loss
+                a_loss = -log_prob * advantage
+                actor_loss_list.append(a_loss) # Instead of -log_prob * advantage
+
+                # Calculate critic (value) loss using huber loss
+                # Huber loss, which is less sensitive to outliers in data than squared-error loss. In value based RL ssetup, huber loss is preferred.
+                c_loss =  F.huber_loss(state_value, torch.tensor([R])) #F.smooth_l1_loss(state_value, torch.tensor([R]))
+                critic_loss_list.append(c_loss)
+
+            # Sum up all the values of actor_losses(policy_losses) and critic_loss(value_losses)
+            actor_loss = torch.stack(actor_loss_list).sum()
+            critic_loss = torch.stack(critic_loss_list).sum()
+
+            # Perform backprop
             actor_loss.backward()
             critic_loss.backward()
-
-            # optimisation
+            
+            # Perform optimization
             actor_optim.step()
             critic_optim.step()
 
-        print(actor_losses)
+            # Storing average losses for plotting
+            if episode%50 == 0:
+                avg_actor_losses.append(np.mean(actor_losses))
+                avg_critic_losses.append(np.mean(critic_losses))
+                actor_losses = []
+                critic_losses = []
+            else:
+                actor_losses.append(actor_loss.detach().numpy())
+                critic_losses.append((critic_loss.detach().numpy()))
+
+        plt.figure(figsize=(10,6))
+        plt.xlabel("X-axis")  # add X-axis label
+        plt.ylabel("Y-axis")  # add Y-axis label
+        plt.title("Average actor loss")  # add title
+        plt.savefig('actor_loss.png')
+        plt.plot(avg_actor_losses)
+        plt.close()
+
+        plt.figure(figsize=(10,6))
+        plt.xlabel("X-axis")  # add X-axis label
+        plt.ylabel("Y-axis")  # add Y-axis label
+        plt.title("Average critic loss")  # add title
+        plt.plot(avg_critic_losses)
+        plt.savefig('critic_loss.png')
+        plt.close()
+
         torch.save(self.actor, 'model/actor.pkl')
         torch.save(self.critic, 'model/critic.pkl')
         self.env.close()
