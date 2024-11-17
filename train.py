@@ -139,8 +139,8 @@ class Train:
         plt.xlabel("X-axis")  # add X-axis label
         plt.ylabel("Y-axis")  # add Y-axis label
         plt.title("Average actor loss")  # add title
-        plt.savefig('actor_loss.png')
         plt.plot(avg_actor_losses)
+        plt.savefig('actor_loss.png')
         plt.close()
 
         plt.figure(figsize=(10,6))
@@ -154,14 +154,6 @@ class Train:
         torch.save(self.actor, 'model/actor.pkl')
         torch.save(self.critic, 'model/critic.pkl')
         self.env.close()
-
-
-
-                
-
-                
-            
-
         
 
 if __name__ == '__main__':
